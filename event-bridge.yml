@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  # Lambda execution role with necessary permissions
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: LambdaExecutionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  # Create the Lambda function that will be triggered by the EventBridge rule
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: CloudEventLambda
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          def handler(event, context):
+              print("Received event: ", event)
+      Runtime: python3.12
+      Timeout: 60
+      
+  # Create an EventBridge rule that triggers the Lambda function 
+  EventBridgeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: CloudEventRule
+      Description: "Triggers Lambda function when a specific  event occurs."
+      EventPattern:
+        source:
+          - aws.ec2
+        detail-type:
+          - "EC2 Instance State-change Notification"
+        detail:
+          state: 
+            - "stopping"
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt LambdaFunction.Arn
+          Id: CloudEventLambda
+
+  # Permission for EventBridge to invoke the Lambda function
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EventBridgeRule.Arn
